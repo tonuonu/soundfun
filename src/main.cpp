@@ -1,14 +1,14 @@
 #include <assert.h>
 #include <ctype.h>
+#include <errno.h>
+#include <opencv2/opencv.hpp>
+#include <sndfile.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <errno.h>
-#include <sndfile.h>
-#include <opencv2/opencv.hpp>
 #include <sys/time.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <fftw3.h>
 
@@ -16,21 +16,66 @@
 #include <stdio.h>
 
 #include <QApplication>
+#include <QGridLayout>
 #include <QLabel>
+#include <QMainWindow>
+#include <QScrollArea>
+#include <QVector>
 #include <QWidget>
 #include <QtGui>
 
 #define REAL 0
 #define IMAG 1
 
-#define HALF_BLOCKSIZE 128
+/*
+ * We aim to detect frequencies in human hearing range which is 20Hz..20kHz. To
+ * detect low frequencies chunks must be 1/20sec long as minimum. 1/20 seconds
+ * is possible best sampling frequnecy/20, so 48,000/20=2400.
+ */
+
+#define HALF_BLOCKSIZE 2400
 #define FULL_BLOCKSIZE (HALF_BLOCKSIZE * 2)
 
+class WCwindow : public QMainWindow {
+public:
+  WCwindow();
+
+protected:
+  void paintEvent(QPaintEvent *event);
+  void wheelEvent(QWheelEvent *event);
+
+private:
+  qreal scale;
+};
+
+void WCwindow::paintEvent(QPaintEvent *event) {
+  QPainter p;
+  p.scale(scale, scale);
+  // paint here
+}
+void WCwindow::wheelEvent(QWheelEvent *event) {
+  scale += (event->delta() / 120); // or use any other step for zooming
+}
+
+WCwindow::WCwindow() { setWindowTitle("FFT"); }
+
 QImage Mat2QImage(cv::Mat const &src) {
-  cv::Mat temp; // make the same cv::Mat
-  cvtColor(src, temp, cv::COLOR_BGR2RGB);
-  QImage dest((const uchar *)temp.data, temp.cols, temp.rows, temp.step,
-              QImage::Format_RGB888);
+  cv::Mat temp;
+
+  double minVal;
+  double maxVal;
+  cv::Point minLoc;
+  cv::Point maxLoc;
+
+  minMaxLoc(src, &minVal, &maxVal, &minLoc, &maxLoc);
+
+  std::cout << "min val: " << minVal << std::endl;
+  std::cout << "max val: " << maxVal << std::endl;
+
+  src.convertTo(temp, CV_8UC1, 255.0 / maxVal);
+
+  QImage dest((const unsigned char *)temp.data, temp.cols, temp.rows, temp.step,
+              QImage::Format_Grayscale8);
   dest.bits();
   return dest;
 }
@@ -39,7 +84,6 @@ int main(int argc, char *argv[]) {
   const char *infilename;
   SNDFILE *infile = NULL;
   SF_INFO sfinfo;
-  cv::Mat noveltymatrix, noveltyvisual, novelty1liner;
 
   if (argc != 2) {
     infilename = "beep1.wav";
@@ -99,7 +143,7 @@ int main(int argc, char *argv[]) {
   std::cout << "allocating memory to hold " << sfinfo.frames << " frames"
             << std::endl;
   printf("Running FFT's on input data\n");
-  cv::Mat items(sfinfo.frames / FULL_BLOCKSIZE, HALF_BLOCKSIZE, CV_32F,
+  cv::Mat items(sfinfo.frames / FULL_BLOCKSIZE + 1, HALF_BLOCKSIZE, CV_32FC1,
                 cv::Scalar(0));
   int block = 0;
   int readcount;
@@ -109,14 +153,15 @@ int main(int argc, char *argv[]) {
     if (readcount != FULL_BLOCKSIZE) {
       std::cout << "sf_readf_short got " << readcount << " after reading "
                 << block << " full blocks. Possibly end of file" << std::endl;
+      memset(signal, 0, sizeof(signal));
+      std::cout << "memsetting " << FULL_BLOCKSIZE << " * sizeof(double) "
+                << sizeof(double) << " * 2 = " << sizeof(signal)
+                << " bytes to 0" << std::endl;
     }
     /*
      * Loop over input data, calculate mono value and input data into FFT
-     * Good to know we memset(0)-d FFT input array as readcount can be
-     * smaller than array length
      */
     for (int i = 0; i < readcount; i++) {
-      signal[i][IMAG] = 0.0;
       double real = 0.0;
       for (int j = 0; j < sfinfo.channels; j++) {
         real += (double)(buf[i * sfinfo.channels + j]);
@@ -124,6 +169,7 @@ int main(int argc, char *argv[]) {
         // << real <<std::endl;
       }
       signal[i][REAL] = real / (double)sfinfo.channels;
+      signal[i][IMAG] = 0.0;
       // std::cout << "=" << i << " " << real << " " <<  signal[i][REAL] <<
       // std::endl;
     }
@@ -139,18 +185,31 @@ int main(int argc, char *argv[]) {
        * signal. At moment we do not need it but phase can be also computer with
        * formula Phase = arctan(Imaginary(F)/Real(F))
        */
-      double tmp =
-          log10(sqrt(pow(result[i][REAL], 2.0) + pow(result[i][IMAG], 2.0)));
+      double tmp = sqrt(pow(result[i][REAL], 2.0) + pow(result[i][IMAG], 2.0));
+      // log10(sqrt(pow(result[i][REAL], 2.0) + pow(result[i][IMAG], 2.0)));
       /* Next keeps it safe from float value "inf" which ruins the game */
       tmp = isinf(tmp) ? 0.0 : tmp;
-      items.at<double>(block, i) = tmp;
+      items.at<float>(block, i) = (float)tmp;
+
       if (block == 1000) {
         std::cout << i << " " << tmp << std::endl;
       }
     }
     block++;
   };
+#if 0
+  double minVal;
+  double maxVal;
+  cv::Point minLoc;
+  cv::Point maxLoc;
 
+  minMaxLoc(items, &minVal, &maxVal, &minLoc, &maxLoc);
+
+  std::cout << "min val: " << minVal << std::endl;
+  std::cout << "max val: " << maxVal << std::endl;
+
+ // items *= 255.0 / (float)maxVal;
+#endif
   std::vector<int> compression_params;
   compression_params.push_back(cv::IMWRITE_PNG_COMPRESSION);
   compression_params.push_back(9);
@@ -173,14 +232,19 @@ int main(int argc, char *argv[]) {
   QApplication a(argc, argv);
   QWidget W1;
   QLabel imlab1(&W1);
-  W1.setWindowTitle("FFT");
 
-  QImage qim1 = Mat2QImage(items);
+  QImage qimg = Mat2QImage(items);
 
-  imlab1.setPixmap(QPixmap::fromImage(qim1));
-  W1.setFixedSize(qim1.size());
-  W1.show();
-  W1.setStyleSheet("border:1px solid rgb(0, 255, 0); ");
+  imlab1.setPixmap(QPixmap::fromImage(qimg));
+  W1.setFixedSize(qimg.size());
+  WCwindow win;
+
+  QScrollArea *scrollArea = new QScrollArea;
+  scrollArea->setWidget(&W1);
+  scrollArea->setWidgetResizable(true);
+
+  win.setCentralWidget(scrollArea);
+
+  win.show();
   return a.exec();
-
 }

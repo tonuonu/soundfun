@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.4)
 PROJECT(soundfun)
 set(CMAKE_BUILD_TYPE Debug)
-set(CMAKE_C_FLAGS "-O2 -Wall")
-set(CMAKE_CXX_FLAGS "-O2 -Wall")
+set(CMAKE_C_FLAGS "-O0 -Wall")
+set(CMAKE_CXX_FLAGS "-O0 -Wall")
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
