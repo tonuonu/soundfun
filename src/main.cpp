@@ -40,22 +40,7 @@ class WCwindow : public QMainWindow {
 public:
   WCwindow();
 
-protected:
-  void paintEvent(QPaintEvent *event);
-  void wheelEvent(QWheelEvent *event);
-
-private:
-  qreal scale;
 };
-
-void WCwindow::paintEvent(QPaintEvent *event) {
-  QPainter p;
-  p.scale(scale, scale);
-  // paint here
-}
-void WCwindow::wheelEvent(QWheelEvent *event) {
-  scale += (event->delta() / 120); // or use any other step for zooming
-}
 
 WCwindow::WCwindow() { setWindowTitle("FFT"); }
 
@@ -86,7 +71,7 @@ int main(int argc, char *argv[]) {
   SF_INFO sfinfo;
 
   if (argc != 2) {
-    infilename = "beep1.wav";
+    infilename = "pulpfiction.wav";
   } else {
     infilename = argv[1];
   }
